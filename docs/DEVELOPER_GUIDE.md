@@ -190,16 +190,7 @@ cd android
 
 ### CI
 
-[`.github/workflows/release-apk.yml`](../.github/workflows/release-apk.yml) runs on tags `v*`:
-
-- Builds `assembleRelease`
-- Publishes GitHub Release asset `PhoneScan-<tag>.apk`
-- Publishes `@alphaseneca/react-native-phonescan` at the tag’s semver
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+[`.github/workflows/release-apk.yml`](../.github/workflows/release-apk.yml) builds the Android release APK and publishes `@alphaseneca/react-native-phonescan` when a version tag is pushed.
 
 ### Component registration
 

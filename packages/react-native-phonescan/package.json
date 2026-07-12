@@ -21,12 +21,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alphaseneca/yarsa-phonescan.git",
+    "url": "git+https://github.com/alphaseneca/PhoneScan-Companion.git",
     "directory": "packages/react-native-phonescan"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "public"
+    "access": "restricted"
   },
   "peerDependencies": {
     "react": "*",

@@ -60,19 +60,6 @@ APK path: `android/app/build/outputs/apk/release/app-release.apk`
 
 Local builds use the React Native debug keystore. Production distribution needs your own signing configuration; do not commit keystores or passwords.
 
-## Tagged releases
-
-Pushing a version tag builds the APK and creates a GitHub Release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Release asset name: `PhoneScan-v1.0.0.apk`.
-
-The same tag publishes `@alphaseneca/react-native-phonescan` at matching semver (`v1.0.0` → `1.0.0`).
-
 ## Use the library in another app
 
 ```bash
@@ -93,7 +80,7 @@ src/presentation/                  # Companion screens and components
 src/settings/                      # App preferences (auto-connect and future toggles)
 src/assets/                        # Branding
 docs/                              # Developer guide and hardware PDF
-.github/workflows/                 # Tag → APK (+ package) release
+.github/workflows/                 # Release automation
 android/                           # Companion Android host project
 ```
 
