@@ -2,6 +2,7 @@ import {NativeEventEmitter, NativeModules, Platform} from 'react-native';
 
 import type {
   ConnectionStatePayload,
+  DevicesChangedPayload,
   ScanPayload,
   ScanSignalPayload,
   SerialConnectionOptions,
@@ -154,6 +155,20 @@ export class NativeUsbSerialDataSource {
 
     const subscription = this.getEmitter().addListener(
       USB_SERIAL_EVENTS.error,
+      listener,
+    );
+    return () => subscription.remove();
+  }
+
+  onDevicesChanged(
+    listener: (payload: DevicesChangedPayload) => void,
+  ): () => void {
+    if (!this.isSerialAvailable()) {
+      return () => undefined;
+    }
+
+    const subscription = this.getEmitter().addListener(
+      USB_SERIAL_EVENTS.devicesChanged,
       listener,
     );
     return () => subscription.remove();

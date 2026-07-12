@@ -37,7 +37,6 @@ export function ScannerScreen() {
   const autoConnect = ready && settings.autoConnect;
   const [page, setPage] = useState<CompanionPage>('home');
   const scrollRef = useRef<ScrollView>(null);
-  const scanOffsetYRef = useRef(0);
   const lastScrolledScanIdRef = useRef<string | null>(null);
 
   const scanner = useScannerScreen(appContainer, {autoConnect});
@@ -79,6 +78,7 @@ export function ScannerScreen() {
   const flashBusy = flashStatus === 'flashing' || flashStatus === 'picking';
   const showActivity = page === 'activity';
 
+  // New scans bring the home screen back to the top (status + latest scan).
   useEffect(() => {
     if (showActivity || latestScan == null) {
       return;
@@ -87,10 +87,7 @@ export function ScannerScreen() {
       return;
     }
     lastScrolledScanIdRef.current = latestScan.id;
-    scrollRef.current?.scrollTo({
-      y: Math.max(0, scanOffsetYRef.current - 8),
-      animated: true,
-    });
+    scrollRef.current?.scrollTo({y: 0, animated: true});
   }, [latestScan, showActivity]);
 
   return (
@@ -130,12 +127,7 @@ export function ScannerScreen() {
 
           {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
-          <View
-            onLayout={event => {
-              scanOffsetYRef.current = event.nativeEvent.layout.y;
-            }}>
-            <ScanDisplay latestScan={latestScan} />
-          </View>
+          <ScanDisplay latestScan={latestScan} />
 
           {serialAvailable ? (
             <>
@@ -186,29 +178,25 @@ export function ScannerScreen() {
               <View style={styles.actions}>
                 <Pressable
                   disabled={
-                    autoConnect ||
                     isSerialConnected ||
                     isConnecting ||
                     selectedDeviceId == null ||
                     flashBusy
                   }
-                  onPress={connect}
+                  onPress={() => {
+                    connect().catch(() => undefined);
+                  }}
                   style={[
                     styles.button,
                     styles.connectButton,
-                    (autoConnect ||
-                      isSerialConnected ||
+                    (isSerialConnected ||
                       isConnecting ||
                       selectedDeviceId == null ||
                       flashBusy) &&
                       styles.buttonDisabled,
                   ]}>
                   <Text style={styles.buttonText}>
-                    {isConnecting
-                      ? 'Connecting…'
-                      : autoConnect
-                        ? 'Auto-connect on'
-                        : 'Connect'}
+                    {isConnecting ? 'Connecting…' : 'Connect'}
                   </Text>
                 </Pressable>
 

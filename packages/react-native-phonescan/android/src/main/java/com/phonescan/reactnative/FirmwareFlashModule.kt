@@ -89,6 +89,20 @@ class FirmwareFlashModule(private val reactContext: ReactApplicationContext) :
       }
     }
 
+  private val usbDetachReceiver =
+    object : BroadcastReceiver() {
+      override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_DETACHED) {
+          return
+        }
+        val device = readUsbDeviceExtra(intent) ?: return
+        if (permissionDeviceId != null && permissionDeviceId == device.deviceId) {
+          Log.i(TAG, "Bootloader device detached during permission: ${device.deviceId}")
+          settlePermissionDetached()
+        }
+      }
+    }
+
   init {
     reactContext.addActivityEventListener(this)
     registerPermissionReceiver()
@@ -525,6 +539,20 @@ class FirmwareFlashModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  private fun settlePermissionDetached() {
+    cancelPermissionTimeout()
+    val promise = permissionPromise
+    permissionPromise = null
+    permissionDeviceId = null
+    if (promise != null) {
+      try {
+        promise.reject("DEVICE_DETACHED", "USB device was unplugged during permission request")
+      } catch (error: Exception) {
+        Log.w(TAG, "Permission promise already settled", error)
+      }
+    }
+  }
+
   private fun settlePick(value: WritableMap?) {
     val promise = pickPromise
     pickPromise = null
@@ -538,18 +566,35 @@ class FirmwareFlashModule(private val reactContext: ReactApplicationContext) :
   }
 
   private fun registerPermissionReceiver() {
-    val filter = IntentFilter(ACTION_USB_PERMISSION)
+    val permissionFilter = IntentFilter(ACTION_USB_PERMISSION)
+    val detachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      reactContext.registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+      reactContext.registerReceiver(
+        usbPermissionReceiver,
+        permissionFilter,
+        Context.RECEIVER_NOT_EXPORTED,
+      )
+      reactContext.registerReceiver(
+        usbDetachReceiver,
+        detachFilter,
+        Context.RECEIVER_NOT_EXPORTED,
+      )
     } else {
       @Suppress("UnspecifiedRegisterReceiverFlag")
-      reactContext.registerReceiver(usbPermissionReceiver, filter)
+      reactContext.registerReceiver(usbPermissionReceiver, permissionFilter)
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      reactContext.registerReceiver(usbDetachReceiver, detachFilter)
     }
   }
 
   private fun unregisterPermissionReceiver() {
     try {
       reactContext.unregisterReceiver(usbPermissionReceiver)
+    } catch (_: IllegalArgumentException) {
+      // Already unregistered.
+    }
+    try {
+      reactContext.unregisterReceiver(usbDetachReceiver)
     } catch (_: IllegalArgumentException) {
       // Already unregistered.
     }

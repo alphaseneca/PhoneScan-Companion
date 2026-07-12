@@ -19,6 +19,7 @@ jest.mock('../src/core/di/container', () => ({
       onScanSignal: jest.fn(() => jest.fn()),
       onConnectionState: jest.fn(() => jest.fn()),
       onError: jest.fn(() => jest.fn()),
+      onDevicesChanged: jest.fn(() => jest.fn()),
     },
     firmwareFlashRepository: {
       onProgress: jest.fn(() => jest.fn()),

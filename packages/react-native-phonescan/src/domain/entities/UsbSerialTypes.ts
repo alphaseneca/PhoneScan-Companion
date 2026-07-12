@@ -4,6 +4,7 @@ export const USB_SERIAL_EVENTS = {
   serialLine: 'UsbSerial:onSerialLine',
   connectionState: 'UsbSerial:onConnectionState',
   error: 'UsbSerial:onError',
+  devicesChanged: 'UsbSerial:onDevicesChanged',
 } as const;
 
 export type Parity = 'none' | 'odd' | 'even' | 'mark' | 'space';
@@ -48,6 +49,11 @@ export interface ConnectionStatePayload {
 export interface SerialErrorPayload {
   code: string;
   message: string;
+}
+
+export interface DevicesChangedPayload {
+  reason: 'attached' | 'detached' | string;
+  deviceId: number;
 }
 
 export type ScanSource = 'serial';

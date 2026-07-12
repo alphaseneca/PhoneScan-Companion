@@ -16,6 +16,7 @@ export function createMockUsbSerial(
     onScanSignal: jest.fn(() => jest.fn()),
     onConnectionState: jest.fn(() => jest.fn()),
     onError: jest.fn(() => jest.fn()),
+    onDevicesChanged: jest.fn(() => jest.fn()),
     isSerialAvailable: jest.fn(() => true),
     ...overrides,
   };

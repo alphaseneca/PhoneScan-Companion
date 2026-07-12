@@ -17,10 +17,7 @@ interface ActivityScreenProps {
   onBack: () => void;
 }
 
-/**
- * Activity screen: device log and scan history.
- * Keeps the home screen focused on live scanning and connection.
- */
+/** Activity: log + history only. */
 export function ActivityScreen({
   serialLog,
   deviceStatus,
@@ -32,13 +29,9 @@ export function ActivityScreen({
 }: ActivityScreenProps) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={8} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
-        <Text style={styles.title}>Activity</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <Pressable onPress={onBack} hitSlop={8} style={styles.back}>
+        <Text style={styles.backText}>← Back</Text>
+      </Pressable>
 
       <SerialLog
         lines={serialLog}
@@ -59,26 +52,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     flexGrow: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
+  back: {
+    alignSelf: 'flex-start',
     paddingVertical: 4,
-    minWidth: 72,
   },
   backText: {
     color: '#0F766E',
     fontWeight: '700',
     fontSize: 16,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  headerSpacer: {
-    minWidth: 72,
   },
 });

@@ -171,9 +171,16 @@ Host `AndroidManifest` must declare USB host and a device filter that includes P
 | Screen | Role |
 |--------|------|
 | Home (`ScannerScreen`) | Live scan, connection, commands, link to Activity, firmware at bottom |
-| Activity | Classified device log + scan history |
+| Activity | Minimal device log + scan history |
 
-On a new scan, Home scrolls the latest-scan panel into view. After a successful flash, the selected firmware file is cleared so the same image is not applied twice by mistake.
+On a new scan, Home scrolls to the top so status and the latest barcode stay in view. After a successful flash, the selected firmware file is cleared so the same image is not applied twice by mistake.
+
+### Plug / unplug
+
+- Native attach/detach broadcasts refresh the device list immediately (no wait for the auto-connect poll).
+- Unplug while connected or connecting aborts the session, clears the auto-connect latch, and shows a short “Scanner unplugged” notice.
+- Unplug during a USB permission dialog rejects with `DEVICE_DETACHED` (CDC and bootloader flash).
+- Manual Connect stays available with Auto-connect on so a user can recover without toggling settings.
 
 Scan UI latency rules:
 
@@ -227,8 +234,10 @@ cd android
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Empty device list | No OTG path, wrong filter, need Refresh |
+| Empty device list | No OTG path, wrong filter, need Refresh (or wait for attach event) |
+| Stale device after unplug | Rare; pull to Refresh or toggle Auto-connect |
 | Bootloader timeout | Missed the ~5s window or unstable cable |
 | Permission denied | User dismissed USB dialog (app or bootloader) |
+| “Scanner unplugged” mid-connect | Cable yanked during open/permission — plug back in and Connect |
 | Flash verify failed | Wrong image or interrupted transfer |
 | UI feels laggy under load | Logging every scan line; keep barcode on `onScan` only |

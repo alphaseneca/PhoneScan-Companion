@@ -16,5 +16,8 @@ export interface IUsbSerialRepository {
     listener: (connected: boolean, deviceId?: number, baudRate?: number) => void,
   ): () => void;
   onError(listener: (code: string, message: string) => void): () => void;
+  onDevicesChanged(
+    listener: (reason: string, deviceId: number) => void,
+  ): () => void;
   isSerialAvailable(): boolean;
 }

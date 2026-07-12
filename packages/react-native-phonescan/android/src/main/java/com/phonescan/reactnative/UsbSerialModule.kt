@@ -50,6 +50,7 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
     private const val EVENT_SCAN_SIGNAL = "UsbSerial:onScanSignal"
     private const val EVENT_STATE = "UsbSerial:onConnectionState"
     private const val EVENT_ERROR = "UsbSerial:onError"
+    private const val EVENT_DEVICES_CHANGED = "UsbSerial:onDevicesChanged"
     private const val READ_BUFFER_SIZE = 8192
     private const val LINE_BUFFER_CAPACITY = 8192
     private const val SCAN_SIGNAL = "[ scan ]"
@@ -74,6 +75,8 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
   private val usbConnectionRef = AtomicReference<UsbDeviceConnection?>(null)
   private val ioManagerRef = AtomicReference<SerialInputOutputManager?>(null)
   private val connectedDeviceIdRef = AtomicReference<Int?>(null)
+  /** Device id for an in-flight connect (before connectedDeviceId is set). */
+  private val connectingDeviceIdRef = AtomicReference<Int?>(null)
 
   private var permissionPromise: Promise? = null
   private var permissionDeviceId: Int? = null
@@ -123,18 +126,40 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
         }
 
         val device = readUsbDeviceExtra(intent) ?: return
+        val deviceId = device.deviceId
+        Log.i(TAG, "USB device detached: $deviceId")
+
         val connectedId = connectedDeviceIdRef.get()
-        if (connectedId != null && device.deviceId == connectedId) {
-          Log.i(TAG, "USB device detached: ${device.deviceId}")
+        val connectingId = connectingDeviceIdRef.get()
+        val needsTeardown =
+          (connectedId != null && connectedId == deviceId) ||
+            (connectingId != null && connectingId == deviceId)
+
+        if (needsTeardown) {
           readExecutor.execute {
             safeDisconnect(emitState = true, reason = "DEVICE_DETACHED")
           }
         }
 
         // Unblock a pending permission dialog if the device was unplugged.
-        if (permissionDeviceId != null && permissionDeviceId == device.deviceId) {
-          settlePermission(false)
+        if (permissionDeviceId != null && permissionDeviceId == deviceId) {
+          settlePermissionDetached()
         }
+
+        // Always notify JS so idle device lists refresh immediately.
+        emitDevicesChanged("detached", deviceId)
+      }
+    }
+
+  private val usbAttachReceiver =
+    object : BroadcastReceiver() {
+      override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+          return
+        }
+        val device = readUsbDeviceExtra(intent) ?: return
+        Log.i(TAG, "USB device attached: ${device.deviceId}")
+        emitDevicesChanged("attached", device.deviceId)
       }
     }
 
@@ -242,6 +267,8 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
       return
     }
 
+    connectingDeviceIdRef.set(deviceId)
+
     readExecutor.execute {
       try {
         // Tear down any previous session quietly before opening a new one.
@@ -269,6 +296,11 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
 
         if (driver.ports.isEmpty()) {
           promise.reject("NO_PORTS", "USB serial driver has no ports")
+          return@execute
+        }
+
+        if (generation != connectionGeneration.get()) {
+          promise.reject("DEVICE_DETACHED", "USB device was unplugged during connect")
           return@execute
         }
 
@@ -330,7 +362,7 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
           Log.w(TAG, "setParameters failed; using driver defaults", error)
         }
 
-        // Abort if a newer connect/disconnect raced us.
+        // Abort if a newer connect/disconnect raced us (includes unplug).
         if (generation != connectionGeneration.get()) {
           try {
             port.close()
@@ -342,7 +374,7 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
           } catch (_: Exception) {
             // Ignore.
           }
-          promise.reject("CONNECT_ABORTED", "Connect was superseded by another session")
+          promise.reject("DEVICE_DETACHED", "USB device was unplugged during connect")
           return@execute
         }
 
@@ -368,10 +400,9 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
 
             override fun onRunError(e: Exception) {
               Log.e(TAG, "Serial IO error", e)
-              // Never tear down on the IO manager thread — schedule cleanup.
+              // Tear down off the IO thread; safeDisconnect emits the lost error once.
               readExecutor.execute {
                 if (generation == connectionGeneration.get()) {
-                  emitError("READ_ERROR", e.message ?: "Serial connection lost")
                   safeDisconnect(emitState = true, reason = "READ_ERROR")
                 }
               }
@@ -396,6 +427,7 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
         safeDisconnect(emitState = false, reason = "CONNECT_FAILED")
         promise.reject("CONNECT_FAILED", error.message ?: "Failed to connect", error)
       } finally {
+        connectingDeviceIdRef.set(null)
         isConnecting.set(false)
       }
     }
@@ -494,8 +526,10 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
 
       if (emitState && wasConnected) {
         emitConnectionState(false, null, null)
-        if (reason == "DEVICE_DETACHED" || reason == "READ_ERROR") {
-          emitError(reason, "USB serial connection lost ($reason). Reconnect to continue.")
+        if (reason == "DEVICE_DETACHED") {
+          emitError(reason, "Scanner unplugged")
+        } else if (reason == "READ_ERROR") {
+          emitError(reason, "USB connection lost. Plug the scanner back in to continue.")
         }
       }
     } finally {
@@ -665,9 +699,32 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  /** Reject a pending permission request when the device disappears mid-dialog. */
+  private fun settlePermissionDetached() {
+    cancelPermissionTimeout()
+    val promise = permissionPromise
+    permissionPromise = null
+    permissionDeviceId = null
+    if (promise != null) {
+      try {
+        promise.reject("DEVICE_DETACHED", "USB device was unplugged during permission request")
+      } catch (error: Exception) {
+        Log.w(TAG, "Permission promise already settled", error)
+      }
+    }
+  }
+
+  private fun emitDevicesChanged(reason: String, deviceId: Int) {
+    val payload = Arguments.createMap()
+    payload.putString("reason", reason)
+    payload.putInt("deviceId", deviceId)
+    sendEvent(EVENT_DEVICES_CHANGED, payload)
+  }
+
   private fun registerReceivers() {
     val permissionFilter = IntentFilter(ACTION_USB_PERMISSION)
     val detachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
+    val attachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       reactContext.registerReceiver(
@@ -680,11 +737,18 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
         detachFilter,
         Context.RECEIVER_NOT_EXPORTED,
       )
+      reactContext.registerReceiver(
+        usbAttachReceiver,
+        attachFilter,
+        Context.RECEIVER_NOT_EXPORTED,
+      )
     } else {
       @Suppress("UnspecifiedRegisterReceiverFlag")
       reactContext.registerReceiver(usbPermissionReceiver, permissionFilter)
       @Suppress("UnspecifiedRegisterReceiverFlag")
       reactContext.registerReceiver(usbDetachReceiver, detachFilter)
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      reactContext.registerReceiver(usbAttachReceiver, attachFilter)
     }
   }
 
@@ -696,6 +760,11 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
     }
     try {
       reactContext.unregisterReceiver(usbDetachReceiver)
+    } catch (_: IllegalArgumentException) {
+      // Already unregistered.
+    }
+    try {
+      reactContext.unregisterReceiver(usbAttachReceiver)
     } catch (_: IllegalArgumentException) {
       // Already unregistered.
     }

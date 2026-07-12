@@ -61,7 +61,7 @@ function Scanner() {
 | `PHONESCAN_COMMANDS` | Known ASCII commands |
 | `isPhoneScanDevice(vid, pid)` | Hardware match |
 
-Events (via repository): `onScan`, `onScanSignal`, `onSerialLine`, `onConnectionState`, `onError`.
+Events (via repository): `onScan`, `onScanSignal`, `onSerialLine`, `onConnectionState`, `onError`, `onDevicesChanged`.
 
 ## Firmware
 

@@ -275,6 +275,8 @@ export function usePhoneScanScanner(
       if (!silent) {
         setIsRefreshing(true);
         setErrorMessage(null);
+        // Manual refresh is an explicit recovery intent.
+        autoConnectAttemptRef.current = null;
       }
 
       try {
@@ -296,11 +298,13 @@ export function usePhoneScanScanner(
           if (currentSelected != null) {
             setSelectedDeviceId(null);
           }
+          autoConnectAttemptRef.current = null;
         } else if (
           currentSelected == null ||
           !sorted.some(device => device.deviceId === currentSelected)
         ) {
           setSelectedDeviceId(sorted[0].deviceId);
+          autoConnectAttemptRef.current = null;
         }
       } catch (error) {
         if (!silent) {
@@ -318,6 +322,19 @@ export function usePhoneScanScanner(
       }
     },
     [client, serialAvailable],
+  );
+
+  const handleSessionLost = useCallback(
+    (message: string | null) => {
+      connectGenerationRef.current += 1;
+      connectInFlightRef.current = false;
+      autoConnectAttemptRef.current = null;
+      setStatus('idle');
+      setDeviceStatus(null);
+      setErrorMessage(message);
+      refreshDevices({silent: true}).catch(() => undefined);
+    },
+    [refreshDevices],
   );
 
   const connect = useCallback(async () => {
@@ -377,12 +394,19 @@ export function usePhoneScanScanner(
         return;
       }
       setStatus('idle');
-      autoConnectAttemptRef.current = deviceId;
-      setErrorMessage(
-        error instanceof Error
-          ? `${error.message} — unplug/replug, then Connect again.`
-          : 'Failed to connect',
-      );
+      const message =
+        error instanceof Error ? error.message : 'Failed to connect';
+      const unplugged =
+        /unplug|detach|DEVICE_DETACHED|DEVICE_NOT_FOUND/i.test(message);
+      if (unplugged) {
+        autoConnectAttemptRef.current = null;
+        setErrorMessage('Scanner unplugged during connect');
+      } else {
+        autoConnectAttemptRef.current = deviceId;
+        setErrorMessage(
+          `${message} — unplug/replug, then Connect again.`,
+        );
+      }
       refreshDevices({silent: true}).catch(() => undefined);
     } finally {
       if (connectGenerationRef.current === generation) {
@@ -603,11 +627,12 @@ export function usePhoneScanScanner(
           setDeviceStatus(null);
           return;
         }
-        setStatus(connected ? 'connected' : 'idle');
-        if (!connected) {
-          setDeviceStatus(null);
-          refreshDevices({silent: true}).catch(() => undefined);
+        if (connected) {
+          setStatus('connected');
+          setErrorMessage(null);
+          return;
         }
+        handleSessionLost(null);
       },
     );
 
@@ -622,13 +647,38 @@ export function usePhoneScanScanner(
         setDeviceStatus(null);
         return;
       }
-      setErrorMessage(message);
-      setStatus(lost ? 'idle' : 'error');
       if (lost) {
-        setDeviceStatus(null);
-        refreshDevices({silent: true}).catch(() => undefined);
+        handleSessionLost(
+          code === 'DEVICE_DETACHED'
+            ? 'Scanner unplugged'
+            : message || 'USB connection lost',
+        );
+        return;
       }
+      setErrorMessage(message);
+      setStatus('error');
     });
+
+    const unsubscribeDevicesChanged =
+      client.usbSerialRepository.onDevicesChanged((reason, _deviceId) => {
+        if (reason === 'detached') {
+          autoConnectAttemptRef.current = null;
+          if (
+            statusRef.current === 'connecting' ||
+            statusRef.current === 'connected'
+          ) {
+            // Connected path also emits onConnectionState/onError; avoid double work.
+            refreshDevices({silent: true}).catch(() => undefined);
+            return;
+          }
+          setErrorMessage(null);
+        }
+        if (reason === 'attached') {
+          autoConnectAttemptRef.current = null;
+          setErrorMessage(null);
+        }
+        refreshDevices({silent: true}).catch(() => undefined);
+      });
 
     const unsubscribeFlash =
       client.firmwareFlashRepository.onProgress(progress => {
@@ -642,6 +692,7 @@ export function usePhoneScanScanner(
       unsubscribeSignal();
       unsubscribeState();
       unsubscribeError();
+      unsubscribeDevicesChanged();
       unsubscribeFlash();
       if (historyFlushRafRef.current != null) {
         cancelAnimationFrame(historyFlushRafRef.current);
@@ -650,7 +701,14 @@ export function usePhoneScanScanner(
         clearTimeout(throughputFlushTimerRef.current);
       }
     };
-  }, [appendSerialLog, client, recordScan, refreshDevices, serialAvailable]);
+  }, [
+    appendSerialLog,
+    client,
+    handleSessionLost,
+    recordScan,
+    refreshDevices,
+    serialAvailable,
+  ]);
 
   return {
     devices,

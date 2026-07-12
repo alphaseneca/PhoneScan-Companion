@@ -46,6 +46,7 @@ export {
   type ScanSignalPayload,
   type ConnectionStatePayload,
   type SerialErrorPayload,
+  type DevicesChangedPayload,
   type Parity,
   type ScanSource,
 } from './domain/entities/UsbSerialTypes';

@@ -8,6 +8,7 @@ describe('bridge event name contracts', () => {
     expect(USB_SERIAL_EVENTS.serialLine).toBe('UsbSerial:onSerialLine');
     expect(USB_SERIAL_EVENTS.connectionState).toBe('UsbSerial:onConnectionState');
     expect(USB_SERIAL_EVENTS.error).toBe('UsbSerial:onError');
+    expect(USB_SERIAL_EVENTS.devicesChanged).toBe('UsbSerial:onDevicesChanged');
   });
 
   it('keeps firmware progress event name stable', () => {

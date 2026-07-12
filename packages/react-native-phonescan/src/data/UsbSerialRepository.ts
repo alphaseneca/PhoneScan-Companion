@@ -60,4 +60,10 @@ export class UsbSerialRepository implements IUsbSerialRepository {
       listener(payload.code, payload.message);
     });
   }
+
+  onDevicesChanged(listener: (reason: string, deviceId: number) => void) {
+    return this.dataSource.onDevicesChanged(payload => {
+      listener(payload.reason, payload.deviceId);
+    });
+  }
 }
