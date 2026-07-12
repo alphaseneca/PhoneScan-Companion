@@ -157,15 +157,31 @@ Host `AndroidManifest` must declare USB host and a device filter that includes P
 | `PickFirmwareFileUseCase` | Document picker |
 | `FlashFirmwareUseCase` | Bootloader entry + ISP |
 
-`usePhoneScanScanner(client, { autoConnect })` owns presentation state: device list, latest scan, history, flash progress, and optional auto-connect polling while idle.
+`usePhoneScanScanner(client, { autoConnect })` owns presentation state: device list, latest scan, history, flash progress, and optional auto-connect.
+
+### Auto-connect
+
+- Runs only while the session is `idle` and settings have finished loading (`ready`).
+- Polls USB silently (no Refresh spinner). Manual Refresh stays available when auto-connect is off.
+- A per-device latch blocks connect spam after failure and blocks immediate re-open after Disconnect. The latch clears when the device leaves the list, when auto-connect is turned on, or after a firmware flash settles.
+- Connect generation counters cancel in-flight connect work if the user disconnects mid-attempt.
+
+### Companion screens
+
+| Screen | Role |
+|--------|------|
+| Home (`ScannerScreen`) | Live scan, connection, commands, link to Activity, firmware at bottom |
+| Activity | Classified device log + scan history |
+
+On a new scan, Home scrolls the latest-scan panel into view. After a successful flash, the selected firmware file is cleared so the same image is not applied twice by mistake.
 
 Scan UI latency rules:
 
 1. Update `latestScan` synchronously on every `onScan`.
 2. Flush history on the next animation frame.
-3. Throughput metrics use a sliding 1-second window.
+3. Throughput metrics use a sliding 1-second window and decay when scanning stops.
 
-Companion settings (`src/settings`) persist preferences such as `autoConnect` via a small SharedPreferences module in the host app. New toggles should extend `CompanionSettings` with defaults.
+Companion settings (`src/settings`) persist preferences such as `autoConnect` via SharedPreferences in the host app. Gate writes and auto-connect on `ready`. New toggles should extend `CompanionSettings` with defaults.
 
 ---
 

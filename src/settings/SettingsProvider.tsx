@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -16,6 +17,10 @@ import {
 
 interface SettingsContextValue {
   settings: CompanionSettings;
+  /**
+   * False until the first load from storage finishes.
+   * Gate auto-connect and settings writes on this so defaults do not race disk.
+   */
   ready: boolean;
   setAutoConnect: (enabled: boolean) => void;
   /** Merge partial updates for future preference keys without new setters. */
@@ -24,11 +29,16 @@ interface SettingsContextValue {
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
+/**
+ * Loads and persists Companion preferences for the host app.
+ * Library code never touches storage; only this provider does.
+ */
 export function SettingsProvider({children}: {children: ReactNode}) {
   const [settings, setSettings] = useState<CompanionSettings>({
     ...DEFAULT_COMPANION_SETTINGS,
   });
   const [ready, setReady] = useState(false);
+  const readyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,11 +46,13 @@ export function SettingsProvider({children}: {children: ReactNode}) {
       .then(loaded => {
         if (!cancelled) {
           setSettings(loaded);
+          readyRef.current = true;
           setReady(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
+          readyRef.current = true;
           setReady(true);
         }
       });
@@ -49,24 +61,30 @@ export function SettingsProvider({children}: {children: ReactNode}) {
     };
   }, []);
 
-  const persist = useCallback((next: CompanionSettings) => {
-    setSettings(next);
-    saveCompanionSettings(next).catch(() => undefined);
-  }, []);
-
   const setAutoConnect = useCallback(
     (enabled: boolean) => {
-      persist({...settings, autoConnect: enabled});
+      setSettings(previous => {
+        if (!readyRef.current) {
+          return previous;
+        }
+        const next = {...previous, autoConnect: enabled};
+        saveCompanionSettings(next).catch(() => undefined);
+        return next;
+      });
     },
-    [persist, settings],
+    [],
   );
 
-  const updateSettings = useCallback(
-    (partial: Partial<CompanionSettings>) => {
-      persist({...settings, ...partial});
-    },
-    [persist, settings],
-  );
+  const updateSettings = useCallback((partial: Partial<CompanionSettings>) => {
+    setSettings(previous => {
+      if (!readyRef.current) {
+        return previous;
+      }
+      const next = {...previous, ...partial};
+      saveCompanionSettings(next).catch(() => undefined);
+      return next;
+    });
+  }, []);
 
   const value = useMemo(
     () => ({settings, ready, setAutoConnect, updateSettings}),

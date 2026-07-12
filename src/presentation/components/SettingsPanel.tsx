@@ -4,6 +4,8 @@ import type {CompanionSettings} from '../../settings/types';
 
 interface SettingsPanelProps {
   settings: CompanionSettings;
+  /** When false, controls stay visible but do not accept input. */
+  ready?: boolean;
   onAutoConnectChange: (enabled: boolean) => void;
 }
 
@@ -13,6 +15,7 @@ interface SettingsPanelProps {
  */
 export function SettingsPanel({
   settings,
+  ready = true,
   onAutoConnectChange,
 }: SettingsPanelProps) {
   return (
@@ -25,6 +28,7 @@ export function SettingsPanel({
           <Text style={styles.hint}>Connect when a device is detected</Text>
         </View>
         <Switch
+          disabled={!ready}
           value={settings.autoConnect}
           onValueChange={onAutoConnectChange}
           trackColor={{false: '#CBD5E1', true: '#5EEAD4'}}

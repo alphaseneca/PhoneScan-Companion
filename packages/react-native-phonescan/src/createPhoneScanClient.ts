@@ -1,5 +1,6 @@
-import {NativeEventEmitter, NativeModules, Platform} from 'react-native';
+import {NativeModules, Platform} from 'react-native';
 
+import {createModuleEventEmitter} from './createModuleEventEmitter';
 import {NativeFirmwareFlashDataSource} from './data/NativeFirmwareFlashDataSource';
 import {FirmwareFlashRepository} from './data/FirmwareFlashRepository';
 import {NativeUsbSerialDataSource} from './data/NativeUsbSerialDataSource';
@@ -36,10 +37,10 @@ export interface PhoneScanClient {
  */
 export function createPhoneScanClient(): PhoneScanClient {
   const serialDataSource = new NativeUsbSerialDataSource(
-    () => new NativeEventEmitter(NativeModules.UsbSerialModule),
+    () => createModuleEventEmitter(NativeModules.UsbSerialModule),
   );
   const flashDataSource = new NativeFirmwareFlashDataSource(
-    () => new NativeEventEmitter(NativeModules.FirmwareFlashModule),
+    () => createModuleEventEmitter(NativeModules.FirmwareFlashModule),
   );
   const usbSerialRepository = new UsbSerialRepository(serialDataSource);
   const firmwareFlashRepository = new FirmwareFlashRepository(flashDataSource);

@@ -442,6 +442,17 @@ class UsbSerialModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  /** Required by NativeEventEmitter on newer React Native. */
+  @ReactMethod
+  fun addListener(eventName: String) {
+    // No-op — subscriptions are tracked on the JS side.
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Int) {
+    // No-op — subscriptions are tracked on the JS side.
+  }
+
   private fun safeDisconnect(emitState: Boolean, reason: String) {
     if (!isTearingDown.compareAndSet(false, true)) {
       return

@@ -23,6 +23,11 @@ interface ThroughputSample {
   chars: number;
 }
 
+export interface RefreshDevicesOptions {
+  /** When true, skip Refresh spinner / error UI (background / auto-connect polls). */
+  silent?: boolean;
+}
+
 export interface UsePhoneScanScannerState {
   devices: UsbDeviceInfo[];
   selectedDeviceId: number | null;
@@ -45,7 +50,7 @@ export interface UsePhoneScanScannerState {
 }
 
 export interface UsePhoneScanScannerActions {
-  refreshDevices: () => Promise<void>;
+  refreshDevices: (options?: RefreshDevicesOptions) => Promise<void>;
   selectDevice: (deviceId: number) => void;
   setBaudRate: (baudRate: number) => void;
   connect: () => Promise<void>;
@@ -68,21 +73,50 @@ export interface UsePhoneScanScannerOptions {
   autoConnectPollMs?: number;
 }
 
+const DEFAULT_AUTO_CONNECT_POLL_MS = 5000;
+const THROUGHPUT_UI_INTERVAL_MS = 250;
+
+function sameDeviceList(a: UsbDeviceInfo[], b: UsbDeviceInfo[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      left.deviceId !== right.deviceId ||
+      left.vendorId !== right.vendorId ||
+      left.productId !== right.productId ||
+      left.hasPermission !== right.hasPermission ||
+      Boolean(left.isPhoneScan) !== Boolean(right.isPhoneScan)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Presentation hook for PhoneScan CDC capture + CH55x firmware update.
  *
- * First principles:
- * - Hardware I/O stays in the native modules; this hook only orchestrates UI state.
- * - Scan hot path never awaits history/metrics (paint latestScan immediately).
- * - Firmware flash owns the USB bus — suppress detach errors during bootloader entry.
- * - Auto-connect is optional and host-controlled so Companion settings can toggle it.
+ * Responsibilities:
+ * - Enumerate USB devices and open a CDC session
+ * - Paint `latestScan` on the hot path; batch history/metrics off the critical path
+ * - Optional auto-connect while idle (host supplies the preference)
+ * - Own firmware pick/flash UI state; suppress expected detach noise during bootloader entry
+ *
+ * Auto-connect latch (`autoConnectAttemptRef`):
+ * - Set after a connect attempt (success or failure) and after intentional disconnect
+ * - Cleared when the selected device disappears, when auto-connect is enabled, or after flash settles
+ * - Prevents connect spam and prevents instant re-open after the user disconnects
  */
 export function usePhoneScanScanner(
   client: PhoneScanClient,
   options: UsePhoneScanScannerOptions = {},
 ): UsePhoneScanScannerState & UsePhoneScanScannerActions {
   const autoConnect = options.autoConnect === true;
-  const autoConnectPollMs = options.autoConnectPollMs ?? 2000;
+  const autoConnectPollMs =
+    options.autoConnectPollMs ?? DEFAULT_AUTO_CONNECT_POLL_MS;
   const [devices, setDevices] = useState<UsbDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const [baudRate, setBaudRate] = useState(DEFAULT_BAUD_RATE);
@@ -111,8 +145,16 @@ export function usePhoneScanScanner(
   const flashingRef = useRef(false);
   const statusRef = useRef<ScannerStatus>('idle');
   const selectedDeviceIdRef = useRef<number | null>(null);
+  /** See hook doc — suppress auto-connect for this device id until cleared. */
   const autoConnectAttemptRef = useRef<number | null>(null);
   const connectInFlightRef = useRef(false);
+  /** Bumped on disconnect so an in-flight connect cannot mark the session connected. */
+  const connectGenerationRef = useRef(0);
+  const lastThroughputUiAtRef = useRef(0);
+  const pendingThroughputRef = useRef({scans: 0, chars: 0});
+  const throughputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const serialAvailable = client.usbSerialRepository.isSerialAvailable();
 
@@ -143,12 +185,61 @@ export function usePhoneScanScanner(
 
   const updateThroughput = useCallback((timestamp: number, chars: number) => {
     const windowStart = timestamp - 1000;
-    const next = throughputRef.current.filter(sample => sample.timestamp >= windowStart);
+    const next = throughputRef.current.filter(
+      sample => sample.timestamp >= windowStart,
+    );
     next.push({timestamp, chars});
     throughputRef.current = next;
-    setScansPerSecond(next.length);
-    setCharsPerSecond(next.reduce((sum, sample) => sum + sample.chars, 0));
+
+    const scans = next.length;
+    const totalChars = next.reduce((sum, sample) => sum + sample.chars, 0);
+    pendingThroughputRef.current = {scans, chars: totalChars};
+
+    const flush = () => {
+      throughputFlushTimerRef.current = null;
+      lastThroughputUiAtRef.current = Date.now();
+      const pending = pendingThroughputRef.current;
+      setScansPerSecond(pending.scans);
+      setCharsPerSecond(pending.chars);
+    };
+
+    const elapsed = Date.now() - lastThroughputUiAtRef.current;
+    if (elapsed >= THROUGHPUT_UI_INTERVAL_MS) {
+      if (throughputFlushTimerRef.current != null) {
+        clearTimeout(throughputFlushTimerRef.current);
+        throughputFlushTimerRef.current = null;
+      }
+      flush();
+      return;
+    }
+
+    if (throughputFlushTimerRef.current == null) {
+      throughputFlushTimerRef.current = setTimeout(
+        flush,
+        THROUGHPUT_UI_INTERVAL_MS - elapsed,
+      );
+    }
   }, []);
+
+  // Decay throughput to zero after scanning stops (window is time-based).
+  useEffect(() => {
+    if (scansPerSecond === 0 && charsPerSecond === 0) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const next = throughputRef.current.filter(
+        sample => sample.timestamp >= now - 1000,
+      );
+      throughputRef.current = next;
+      const scans = next.length;
+      const totalChars = next.reduce((sum, sample) => sum + sample.chars, 0);
+      pendingThroughputRef.current = {scans, chars: totalChars};
+      setScansPerSecond(scans);
+      setCharsPerSecond(totalChars);
+    }, THROUGHPUT_UI_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [scansPerSecond, charsPerSecond]);
 
   const recordScan = useCallback(
     (value: string, timestamp: number) => {
@@ -174,41 +265,60 @@ export function usePhoneScanScanner(
     }
   }, []);
 
-  const refreshDevices = useCallback(async () => {
-    if (!serialAvailable) {
-      return;
-    }
-
-    setIsRefreshing(true);
-    setErrorMessage(null);
-
-    try {
-      const nextDevices = await client.listUsbDevices.execute();
-      const sorted = [...nextDevices].sort((a, b) => {
-        const aPhone = a.isPhoneScan || isPhoneScanDevice(a.vendorId, a.productId);
-        const bPhone = b.isPhoneScan || isPhoneScanDevice(b.vendorId, b.productId);
-        return Number(bPhone) - Number(aPhone);
-      });
-
-      setDevices(sorted);
-
-      if (sorted.length === 0) {
-        setSelectedDeviceId(null);
-      } else if (
-        selectedDeviceId == null ||
-        !sorted.some(device => device.deviceId === selectedDeviceId)
-      ) {
-        setSelectedDeviceId(sorted[0].deviceId);
+  const refreshDevices = useCallback(
+    async (options?: RefreshDevicesOptions) => {
+      if (!serialAvailable) {
+        return;
       }
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Failed to list USB devices',
-      );
-      setStatus('error');
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [client, selectedDeviceId, serialAvailable]);
+
+      const silent = options?.silent === true;
+      if (!silent) {
+        setIsRefreshing(true);
+        setErrorMessage(null);
+      }
+
+      try {
+        const nextDevices = await client.listUsbDevices.execute();
+        const sorted = [...nextDevices].sort((a, b) => {
+          const aPhone =
+            a.isPhoneScan || isPhoneScanDevice(a.vendorId, a.productId);
+          const bPhone =
+            b.isPhoneScan || isPhoneScanDevice(b.vendorId, b.productId);
+          return Number(bPhone) - Number(aPhone);
+        });
+
+        setDevices(previous =>
+          sameDeviceList(previous, sorted) ? previous : sorted,
+        );
+
+        const currentSelected = selectedDeviceIdRef.current;
+        if (sorted.length === 0) {
+          if (currentSelected != null) {
+            setSelectedDeviceId(null);
+          }
+        } else if (
+          currentSelected == null ||
+          !sorted.some(device => device.deviceId === currentSelected)
+        ) {
+          setSelectedDeviceId(sorted[0].deviceId);
+        }
+      } catch (error) {
+        if (!silent) {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : 'Failed to list USB devices',
+          );
+          setStatus('error');
+        }
+      } finally {
+        if (!silent) {
+          setIsRefreshing(false);
+        }
+      }
+    },
+    [client, serialAvailable],
+  );
 
   const connect = useCallback(async () => {
     if (!serialAvailable) {
@@ -226,6 +336,7 @@ export function usePhoneScanScanner(
       return;
     }
 
+    const generation = connectGenerationRef.current;
     connectInFlightRef.current = true;
     setStatus('connecting');
     setErrorMessage(null);
@@ -242,7 +353,15 @@ export function usePhoneScanScanner(
         await new Promise<void>(resolve => {
           setTimeout(resolve, 350);
         });
+        if (connectGenerationRef.current !== generation) {
+          return;
+        }
         await attemptConnect();
+      }
+
+      if (connectGenerationRef.current !== generation) {
+        await client.disconnectScanner.execute().catch(() => undefined);
+        return;
       }
 
       setStatus('connected');
@@ -254,21 +373,30 @@ export function usePhoneScanScanner(
         // Connected successfully; status query is best-effort.
       }
     } catch (error) {
+      if (connectGenerationRef.current !== generation) {
+        return;
+      }
       setStatus('idle');
-      // Remember this device so auto-connect does not spam retries until unplug.
       autoConnectAttemptRef.current = deviceId;
       setErrorMessage(
         error instanceof Error
           ? `${error.message} — unplug/replug, then Connect again.`
           : 'Failed to connect',
       );
-      refreshDevices().catch(() => undefined);
+      refreshDevices({silent: true}).catch(() => undefined);
     } finally {
-      connectInFlightRef.current = false;
+      if (connectGenerationRef.current === generation) {
+        connectInFlightRef.current = false;
+      }
     }
   }, [baudRate, client, refreshDevices, serialAvailable]);
 
   const disconnect = useCallback(async () => {
+    connectGenerationRef.current += 1;
+    connectInFlightRef.current = false;
+    // Keep auto-connect from immediately re-opening this same device.
+    autoConnectAttemptRef.current = selectedDeviceIdRef.current;
+
     if (!serialAvailable) {
       setStatus('idle');
       return;
@@ -307,8 +435,14 @@ export function usePhoneScanScanner(
       cancelAnimationFrame(historyFlushRafRef.current);
       historyFlushRafRef.current = null;
     }
+    if (throughputFlushTimerRef.current != null) {
+      clearTimeout(throughputFlushTimerRef.current);
+      throughputFlushTimerRef.current = null;
+    }
     pendingHistoryRef.current = [];
     throughputRef.current = [];
+    pendingThroughputRef.current = {scans: 0, chars: 0};
+    lastThroughputUiAtRef.current = 0;
     setLatestScan(null);
     setScanHistory([]);
     setScansPerSecond(0);
@@ -364,35 +498,46 @@ export function usePhoneScanScanner(
         firmwareBase64: firmwareFile.base64,
         enterBootloader: true,
       });
+      setFirmwareFile(null);
+      setFlashProgress(null);
       setFlashStatus('success');
       setFlashMessage(
         `Flashed ${result.bytesWritten} bytes · BL ${result.bootloaderVersion}`,
       );
       setStatus('idle');
       setDeviceStatus(null);
-      // Device reboots as PhoneScan — refresh after a short settle.
-      await new Promise<void>(resolve => {
-        setTimeout(resolve, 800);
-      });
-      await refreshDevices();
     } catch (error) {
       setFlashStatus('error');
       setFlashMessage(
         error instanceof Error ? error.message : 'Firmware flash failed',
       );
-      refreshDevices().catch(() => undefined);
     } finally {
       flashingRef.current = false;
     }
+
+    // Allow auto-connect after the device reboots as PhoneScan.
+    autoConnectAttemptRef.current = null;
+    await new Promise<void>(resolve => {
+      setTimeout(resolve, 800);
+    });
+    await refreshDevices({silent: true}).catch(() => undefined);
   }, [client, firmwareFile, refreshDevices]);
 
+  // Silent discovery on mount (spinner reserved for manual Refresh).
   useEffect(() => {
     if (serialAvailable) {
-      refreshDevices().catch(() => undefined);
+      refreshDevices({silent: true}).catch(() => undefined);
     }
   }, [refreshDevices, serialAvailable]);
 
-  // Auto-connect: when enabled, poll for devices while idle and connect once.
+  // Enabling auto-connect clears the latch so a fresh attempt can run.
+  useEffect(() => {
+    if (autoConnect) {
+      autoConnectAttemptRef.current = null;
+    }
+  }, [autoConnect]);
+
+  // Background discovery while auto-connect is on and the session is idle.
   useEffect(() => {
     if (!serialAvailable || !autoConnect) {
       return undefined;
@@ -407,7 +552,7 @@ export function usePhoneScanScanner(
       ) {
         return;
       }
-      refreshDevices().catch(() => undefined);
+      refreshDevices({silent: true}).catch(() => undefined);
     };
 
     tick();
@@ -415,7 +560,7 @@ export function usePhoneScanScanner(
     return () => clearInterval(timer);
   }, [autoConnect, autoConnectPollMs, refreshDevices, serialAvailable]);
 
-  // After device list updates, attempt auto-connect to the preferred device.
+  // Connect when a preferred device appears and the latch allows it.
   useEffect(() => {
     if (!autoConnect || !serialAvailable || flashingRef.current) {
       return;
@@ -427,7 +572,6 @@ export function usePhoneScanScanner(
       autoConnectAttemptRef.current = null;
       return;
     }
-    // Avoid hammering the same device after a failed attempt until list changes.
     if (autoConnectAttemptRef.current === selectedDeviceId) {
       return;
     }
@@ -462,7 +606,7 @@ export function usePhoneScanScanner(
         setStatus(connected ? 'connected' : 'idle');
         if (!connected) {
           setDeviceStatus(null);
-          refreshDevices().catch(() => undefined);
+          refreshDevices({silent: true}).catch(() => undefined);
         }
       },
     );
@@ -482,7 +626,7 @@ export function usePhoneScanScanner(
       setStatus(lost ? 'idle' : 'error');
       if (lost) {
         setDeviceStatus(null);
-        refreshDevices().catch(() => undefined);
+        refreshDevices({silent: true}).catch(() => undefined);
       }
     });
 
@@ -501,6 +645,9 @@ export function usePhoneScanScanner(
       unsubscribeFlash();
       if (historyFlushRafRef.current != null) {
         cancelAnimationFrame(historyFlushRafRef.current);
+      }
+      if (throughputFlushTimerRef.current != null) {
+        clearTimeout(throughputFlushTimerRef.current);
       }
     };
   }, [appendSerialLog, client, recordScan, refreshDevices, serialAvailable]);

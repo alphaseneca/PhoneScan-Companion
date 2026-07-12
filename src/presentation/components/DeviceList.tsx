@@ -13,6 +13,8 @@ interface DeviceListProps {
   devices: UsbDeviceInfo[];
   selectedDeviceId: number | null;
   isRefreshing: boolean;
+  /** When true, hide manual Refresh — auto-connect owns background discovery. */
+  autoConnect?: boolean;
   onSelect: (deviceId: number) => void;
   onRefresh: () => void;
 }
@@ -21,6 +23,7 @@ export function DeviceList({
   devices,
   selectedDeviceId,
   isRefreshing,
+  autoConnect = false,
   onSelect,
   onRefresh,
 }: DeviceListProps) {
@@ -28,17 +31,28 @@ export function DeviceList({
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Devices</Text>
-        <Pressable onPress={onRefresh} style={styles.refreshButton}>
-          {isRefreshing ? (
-            <ActivityIndicator size="small" color="#0F766E" />
-          ) : (
-            <Text style={styles.refreshText}>Refresh</Text>
-          )}
-        </Pressable>
+        {autoConnect ? (
+          <Text style={styles.autoLabel}>Auto</Text>
+        ) : (
+          <Pressable
+            onPress={onRefresh}
+            disabled={isRefreshing}
+            style={styles.refreshButton}>
+            {isRefreshing ? (
+              <ActivityIndicator size="small" color="#0F766E" />
+            ) : (
+              <Text style={styles.refreshText}>Refresh</Text>
+            )}
+          </Pressable>
+        )}
       </View>
 
       {devices.length === 0 ? (
-        <Text style={styles.empty}>No USB devices. Plug in PhoneScan and refresh.</Text>
+        <Text style={styles.empty}>
+          {autoConnect
+            ? 'No USB devices. Plug in PhoneScan.'
+            : 'No USB devices. Plug in PhoneScan and refresh.'}
+        </Text>
       ) : (
         <FlatList
           data={devices}
@@ -84,10 +98,19 @@ const styles = StyleSheet.create({
   refreshButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
+    minWidth: 72,
+    alignItems: 'flex-end',
   },
   refreshText: {
     color: '#0F766E',
     fontWeight: '600',
+  },
+  autoLabel: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    color: '#64748B',
+    fontWeight: '600',
+    fontSize: 13,
   },
   empty: {
     color: '#64748B',

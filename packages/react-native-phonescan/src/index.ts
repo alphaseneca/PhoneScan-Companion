@@ -82,4 +82,5 @@ export {
   type UsePhoneScanScannerState,
   type UsePhoneScanScannerActions,
   type UsePhoneScanScannerOptions,
+  type RefreshDevicesOptions,
 } from './hooks/usePhoneScanScanner';

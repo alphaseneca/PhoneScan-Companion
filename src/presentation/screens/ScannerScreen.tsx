@@ -1,3 +1,4 @@
+import {useEffect, useRef, useState} from 'react';
 import {
   Image,
   Pressable,
@@ -15,17 +16,32 @@ import {DeviceList} from '../components/DeviceList';
 import {FirmwareUpdatePanel} from '../components/FirmwareUpdatePanel';
 import {PhoneScanControlPanel} from '../components/PhoneScanControlPanel';
 import {ScanDisplay} from '../components/ScanDisplay';
-import {ScanHistory} from '../components/ScanHistory';
-import {SerialLog} from '../components/SerialLog';
 import {SettingsPanel} from '../components/SettingsPanel';
 import {useScannerScreen} from '../hooks/useScannerScreen';
+import {ActivityScreen} from './ActivityScreen';
+
+type CompanionPage = 'home' | 'activity';
 
 /**
- * PhoneScan Companion home screen.
- * Shows live scans, connection, firmware flash (.bin/.hex), and settings.
+ * PhoneScan Companion root screen.
+ *
+ * Layout:
+ * - Home: live scan, connection, commands, Activity entry, firmware at the bottom
+ * - Activity: device log + scan history
+ *
+ * All hooks run on every render; page switches only change JSX so Fast Refresh
+ * cannot desync the hook queue. Auto-connect is enabled only after settings `ready`.
  */
 export function ScannerScreen() {
-  const {settings, setAutoConnect} = useCompanionSettings();
+  const {settings, ready, setAutoConnect} = useCompanionSettings();
+  const autoConnect = ready && settings.autoConnect;
+  const [page, setPage] = useState<CompanionPage>('home');
+  const scrollRef = useRef<ScrollView>(null);
+  const scanOffsetYRef = useRef(0);
+  const lastScrolledScanIdRef = useRef<string | null>(null);
+
+  const scanner = useScannerScreen(appContainer, {autoConnect});
+
   const {
     devices,
     selectedDeviceId,
@@ -56,149 +72,206 @@ export function ScannerScreen() {
     pickFirmware,
     clearFirmware,
     flashFirmware,
-  } = useScannerScreen(appContainer, {autoConnect: settings.autoConnect});
+  } = scanner;
 
   const isSerialConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const flashBusy = flashStatus === 'flashing' || flashStatus === 'picking';
+  const showActivity = page === 'activity';
+
+  useEffect(() => {
+    if (showActivity || latestScan == null) {
+      return;
+    }
+    if (lastScrolledScanIdRef.current === latestScan.id) {
+      return;
+    }
+    lastScrolledScanIdRef.current = latestScan.id;
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, scanOffsetYRef.current - 8),
+      animated: true,
+    });
+  }, [latestScan, showActivity]);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.hero}>
-        <Image
-          source={require('../../assets/phonescan-logo.png')}
-          style={styles.logo}
-          accessibilityLabel="PhoneScan Companion"
+    <View style={styles.root}>
+      {showActivity ? (
+        <ActivityScreen
+          serialLog={serialLog}
+          deviceStatus={deviceStatus}
+          lastScanSignalAt={lastScanSignalAt}
+          scanHistory={scanHistory}
+          onClearLog={clearSerialLog}
+          onClearHistory={clearHistory}
+          onBack={() => setPage('home')}
         />
-        <View style={styles.heroText}>
-          <Text style={styles.brand}>PhoneScan Companion</Text>
-          <Text style={styles.tagline}>Scan · Control · Flash</Text>
-        </View>
-      </View>
-
-      <ConnectionStatus
-        status={status}
-        scansPerSecond={scansPerSecond}
-        charsPerSecond={charsPerSecond}
-      />
-
-      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-
-      <ScanDisplay latestScan={latestScan} />
-
-      {serialAvailable ? (
-        <>
-          <SettingsPanel
-            settings={settings}
-            onAutoConnectChange={setAutoConnect}
-          />
-
-          <DeviceList
-            devices={devices}
-            selectedDeviceId={selectedDeviceId}
-            isRefreshing={isRefreshing}
-            onSelect={selectDevice}
-            onRefresh={refreshDevices}
-          />
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Baud</Text>
-            <View style={styles.baudRow}>
-              {BAUD_RATE_OPTIONS.map(rate => {
-                const selected = rate === baudRate;
-                return (
-                  <Pressable
-                    key={rate}
-                    disabled={isSerialConnected || isConnecting || flashBusy}
-                    onPress={() => setBaudRate(rate)}
-                    style={[styles.baudChip, selected && styles.baudChipSelected]}>
-                    <Text
-                      style={[
-                        styles.baudChipText,
-                        selected && styles.baudChipTextSelected,
-                      ]}>
-                      {rate}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+      ) : (
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled">
+          <View style={styles.hero}>
+            <Image
+              source={require('../../assets/phonescan-logo.png')}
+              style={styles.logo}
+              accessibilityLabel="PhoneScan Companion"
+            />
+            <View style={styles.heroText}>
+              <Text style={styles.brand}>PhoneScan Companion</Text>
+              <Text style={styles.tagline}>Scan · Control · Flash</Text>
             </View>
           </View>
 
-          <View style={styles.actions}>
-            <Pressable
-              disabled={
-                isSerialConnected ||
-                isConnecting ||
-                selectedDeviceId == null ||
-                flashBusy
-              }
-              onPress={connect}
-              style={[
-                styles.button,
-                styles.connectButton,
-                (isSerialConnected ||
-                  isConnecting ||
-                  selectedDeviceId == null ||
-                  flashBusy) &&
-                  styles.buttonDisabled,
-              ]}>
-              <Text style={styles.buttonText}>
-                {isConnecting ? 'Connecting…' : 'Connect'}
-              </Text>
-            </Pressable>
+          <ConnectionStatus
+            status={status}
+            scansPerSecond={scansPerSecond}
+            charsPerSecond={charsPerSecond}
+          />
 
-            <Pressable
-              disabled={(!isSerialConnected && !isConnecting) || flashBusy}
-              onPress={disconnect}
-              style={[
-                styles.button,
-                styles.disconnectButton,
-                ((!isSerialConnected && !isConnecting) || flashBusy) &&
-                  styles.buttonDisabled,
-              ]}>
-              <Text style={styles.buttonText}>Disconnect</Text>
-            </Pressable>
+          {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+          <View
+            onLayout={event => {
+              scanOffsetYRef.current = event.nativeEvent.layout.y;
+            }}>
+            <ScanDisplay latestScan={latestScan} />
           </View>
 
-          <PhoneScanControlPanel
-            disabled={!isSerialConnected || flashBusy}
-            onCommand={sendCommand}
-          />
+          {serialAvailable ? (
+            <>
+              <SettingsPanel
+                settings={settings}
+                ready={ready}
+                onAutoConnectChange={setAutoConnect}
+              />
 
-          <FirmwareUpdatePanel
-            disabled={flashBusy}
-            firmwareFile={firmwareFile}
-            flashStatus={flashStatus}
-            flashProgress={flashProgress}
-            flashMessage={flashMessage}
-            onPick={pickFirmware}
-            onClear={clearFirmware}
-            onFlash={flashFirmware}
-          />
+              <DeviceList
+                devices={devices}
+                selectedDeviceId={selectedDeviceId}
+                isRefreshing={isRefreshing}
+                autoConnect={autoConnect}
+                onSelect={selectDevice}
+                onRefresh={() => {
+                  refreshDevices().catch(() => undefined);
+                }}
+              />
 
-          <SerialLog
-            lines={serialLog}
-            deviceStatus={deviceStatus}
-            lastScanSignalAt={lastScanSignalAt}
-            onClear={clearSerialLog}
-          />
-        </>
-      ) : (
-        <View style={styles.iosNote}>
-          <Text style={styles.iosNoteTitle}>Android required</Text>
-          <Text style={styles.iosNoteBody}>
-            PhoneScan Companion needs USB OTG on Android.
-          </Text>
-        </View>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Baud</Text>
+                <View style={styles.baudRow}>
+                  {BAUD_RATE_OPTIONS.map(rate => {
+                    const selected = rate === baudRate;
+                    return (
+                      <Pressable
+                        key={rate}
+                        disabled={isSerialConnected || isConnecting || flashBusy}
+                        onPress={() => setBaudRate(rate)}
+                        style={[
+                          styles.baudChip,
+                          selected && styles.baudChipSelected,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.baudChipText,
+                            selected && styles.baudChipTextSelected,
+                          ]}>
+                          {rate}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.actions}>
+                <Pressable
+                  disabled={
+                    autoConnect ||
+                    isSerialConnected ||
+                    isConnecting ||
+                    selectedDeviceId == null ||
+                    flashBusy
+                  }
+                  onPress={connect}
+                  style={[
+                    styles.button,
+                    styles.connectButton,
+                    (autoConnect ||
+                      isSerialConnected ||
+                      isConnecting ||
+                      selectedDeviceId == null ||
+                      flashBusy) &&
+                      styles.buttonDisabled,
+                  ]}>
+                  <Text style={styles.buttonText}>
+                    {isConnecting
+                      ? 'Connecting…'
+                      : autoConnect
+                        ? 'Auto-connect on'
+                        : 'Connect'}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  disabled={(!isSerialConnected && !isConnecting) || flashBusy}
+                  onPress={disconnect}
+                  style={[
+                    styles.button,
+                    styles.disconnectButton,
+                    ((!isSerialConnected && !isConnecting) || flashBusy) &&
+                      styles.buttonDisabled,
+                  ]}>
+                  <Text style={styles.buttonText}>Disconnect</Text>
+                </Pressable>
+              </View>
+
+              <PhoneScanControlPanel
+                disabled={!isSerialConnected || flashBusy}
+                onCommand={sendCommand}
+              />
+
+              <Pressable
+                onPress={() => setPage('activity')}
+                style={styles.activityLink}>
+                <View>
+                  <Text style={styles.activityTitle}>Activity</Text>
+                  <Text style={styles.activityMeta}>
+                    {scanHistory.length} scans · {serialLog.length} log lines
+                  </Text>
+                </View>
+                <Text style={styles.activityChevron}>›</Text>
+              </Pressable>
+
+              <FirmwareUpdatePanel
+                disabled={flashBusy}
+                firmwareFile={firmwareFile}
+                flashStatus={flashStatus}
+                flashProgress={flashProgress}
+                flashMessage={flashMessage}
+                onPick={pickFirmware}
+                onClear={clearFirmware}
+                onFlash={flashFirmware}
+              />
+            </>
+          ) : (
+            <View style={styles.iosNote}>
+              <Text style={styles.iosNoteTitle}>Android required</Text>
+              <Text style={styles.iosNoteBody}>
+                PhoneScan Companion needs USB OTG on Android.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
       )}
-
-      <ScanHistory history={scanHistory} onClear={clearHistory} />
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
   container: {
     padding: 20,
     gap: 16,
@@ -286,6 +359,33 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 16,
+  },
+  activityLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  activityTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  activityMeta: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#64748B',
+  },
+  activityChevron: {
+    fontSize: 28,
+    lineHeight: 28,
+    color: '#94A3B8',
+    fontWeight: '300',
   },
   iosNote: {
     backgroundColor: '#FFFBEB',
