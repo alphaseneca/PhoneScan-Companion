@@ -4,6 +4,10 @@ import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {SettingsProvider} from './src/settings/SettingsProvider';
 import {ScannerScreen} from './src/presentation/screens/ScannerScreen';
 
+/**
+ * Host shell. Providers remount cleanly on full reload; do not early-return
+ * around hooks in child screens.
+ */
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
 
