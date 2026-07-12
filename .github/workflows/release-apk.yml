@@ -1,0 +1,120 @@
+name: Release APK and npm package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-release-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Name APK with version tag
+        id: apk
+        run: |
+          SRC="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "APK not found at $SRC"
+            exit 1
+          fi
+          NAME="PhoneScan-${{ github.ref_name }}.apk"
+          DEST="android/app/build/outputs/apk/release/${NAME}"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneScan-${{ github.ref_name }}
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PhoneScan ${{ github.ref_name }}
+          body: |
+            ## PhoneScan ${{ github.ref_name }}
+
+            Android release APK: `${{ steps.apk.outputs.name }}`
+
+            Install on a USB-OTG Android device, then connect PhoneScan hardware (VID `0x1209` / PID `0xC55C`).
+          generate_release_notes: true
+          files: ${{ steps.apk.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/react-native-phonescan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set package version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-].+)?$ ]]; then
+            echo "Invalid semver from tag $GITHUB_REF_NAME (expected vX.Y.Z)"
+            exit 1
+          fi
+          # Align package.json version with the git tag (v1.2.3 → 1.2.3).
+          npm pkg set "version=$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing @alphaseneca/react-native-phonescan@$VERSION"
+
+      - name: Set up Node.js (GitHub Packages)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@alphaseneca'
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npmjs.org (optional)
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "NPM_TOKEN secret not set; skipping npmjs.org publish"
+            exit 0
+          fi
+          npm publish --access public --registry https://registry.npmjs.org
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,5 @@
+android/build/
+android/.gradle/
+android/.cxx/
+**/*.iml
+.DS_Store

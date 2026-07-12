@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PhoneScan (VID 1209 / PID C55C) -->
+    <usb-device vendor-id="4617" product-id="50524" />
+    <!-- CH55x ISP bootloader (VID 4348 / PID 55E0) — firmware update window -->
+    <usb-device vendor-id="17224" product-id="21984" />
+    <!-- FTDI -->
+    <usb-device vendor-id="1027" />
+    <!-- Prolific PL2303 -->
+    <usb-device vendor-id="1659" />
+    <!-- Silicon Labs CP210x -->
+    <usb-device vendor-id="4292" />
+    <!-- QinHeng CH340/CH341 -->
+    <usb-device vendor-id="6790" />
+    <!-- Generic CDC ACM -->
+    <usb-device class="2" subclass="2" protocol="1" />
+</resources>

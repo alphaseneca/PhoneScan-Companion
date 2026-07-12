@@ -1,0 +1,40 @@
+{
+  "name": "@alphaseneca/react-native-phonescan",
+  "version": "1.0.0",
+  "description": "PhoneScan USB CDC serial + CH55x firmware flash for React Native (Android)",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "react-native": "src/index.ts",
+  "files": [
+    "src",
+    "android",
+    "react-native.config.js",
+    "README.md"
+  ],
+  "keywords": [
+    "react-native",
+    "phonescan",
+    "usb",
+    "barcode",
+    "scanner",
+    "cdc"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alphaseneca/yarsa-phonescan.git",
+    "directory": "packages/react-native-phonescan"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "react": "19.2.3",
+    "react-native": "0.86.0"
+  },
+  "license": "MIT"
+}
