@@ -266,12 +266,12 @@ export function usePhoneScanScanner(
   }, []);
 
   const refreshDevices = useCallback(
-    async (options?: RefreshDevicesOptions) => {
+    async (refreshOptions?: RefreshDevicesOptions) => {
       if (!serialAvailable) {
         return;
       }
 
-      const silent = options?.silent === true;
+      const silent = refreshOptions?.silent === true;
       if (!silent) {
         setIsRefreshing(true);
         setErrorMessage(null);
