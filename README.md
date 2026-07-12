@@ -80,7 +80,7 @@ src/presentation/                  # Companion screens and components
 src/settings/                      # App preferences (auto-connect and future toggles)
 src/assets/                        # Branding
 docs/                              # Developer guide and hardware PDF
-.github/workflows/                 # Release automation
+.github/workflows/                 # CI and release workflows
 android/                           # Companion Android host project
 ```
 
